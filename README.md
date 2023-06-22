@@ -247,7 +247,7 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
 22. The manifests need some changes to be made as follows:
     1. Open the file install_dir/manifests/cluster-ingress-default-ingresscontroller.yaml 
 
-           vi install_dir/manifests/cluster-ingress-default-ingresscontroller.yaml
+           vi $INSTALL_DIR/manifests/cluster-ingress-default-ingresscontroller.yaml
            
     2. Under spec.endpointPublishingStrategy :
        1. Remove the ‘loadbalancer’ parameter completely so that only the ‘type’ section remains.
