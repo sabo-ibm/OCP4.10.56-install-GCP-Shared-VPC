@@ -265,6 +265,7 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
        Refer the sample-cluster-ingress-default-ingresscontroller.yaml file to compare and see how the resulting file should look like.
        
     3. Remove the manifest files for the worker & master machines, as we will be creating the master & worker nodes using the Deployment Manager templates.
+          ! run remove99.sh
               
            rm -f $INSTALL_DIR/openshift/99_openshift-cluster-api_master-machines-*
            rm -f $INSTALL_DIR/openshift/99_openshift-cluster-api_worker-machineset-*
@@ -274,6 +275,7 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
         openshift-install create ignition-configs --dir $INSTALL_DIR
           
 24. Set the environment variables for your environment. Please set the values as per your needs.
+        ./source env.sh 
 
         export BASE_DOMAIN=openshift.com
         export BASE_DOMAIN_ZONE_NAME=ocp-private-zone
@@ -298,9 +300,11 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
     These environment variables will be required for the upcoming commands as they call these variables in them, so be sure to set these.
 
 
-25. Now we create the internal loadbalancer component that will be used for api related communication by the cluster nodes. The following commands will create the load balancer, its corresponding health check component, as well as the backend empty instance groups into which the master nodes will be put into at the time of Master nodes creation in a later step.
+26. Now we create the internal loadbalancer component that will be used for api related communication by the cluster nodes. The following commands will create the load balancer, its corresponding health check component, as well as the backend empty instance groups into which the master nodes will be put into at the time of Master nodes creation in a later step.
+    run infra.sh
+    
     1. Create the `.yaml` file
-       
+           
            cat <<EOF >02_infra.yaml
            imports:
            - path: 02_lb_int.py 
@@ -317,16 +321,17 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
                - '${ZONE_1}'
                - '${ZONE_2}'
            EOF
-    2. Create the corresponding GCP object:
+    1. Create the corresponding GCP object:
     
            gcloud deployment-manager deployments create ${INFRA_ID}-infra --config 02_infra.yaml
            
            
-26. We now need to get the Cluster IP. This is basically the loadbalancer IP that we created in the previous step. This IP is used as the Host IP addresses for the DNS record sets that will be put into our private DNS zone. 
+28. We now need to get the Cluster IP. This is basically the loadbalancer IP that we created in the previous step. This IP is used as the Host IP addresses for the DNS record sets that will be put into our private DNS zone. 
+       ! run dns.sh 
 
         export CLUSTER_IP=(`gcloud compute addresses describe ${INFRA_ID}-cluster-ip --region=${REGION} --format json | jq -r .address`)
         
-27. We now create the required record sets for api communication among the cluster nodes.
+29. We now create the required record sets for api communication among the cluster nodes.
 
         if [ -f transaction.yaml ]; then rm transaction.yaml; fi
         gcloud dns record-sets transaction start --zone ocp-private-zone
@@ -334,14 +339,16 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
         gcloud dns record-sets transaction add ${CLUSTER_IP} --name api-int.${CLUSTER_NAME}.${BASE_DOMAIN}. --ttl 60 --type A --zone ocp-private-zone
         gcloud dns record-sets transaction execute --zone ocp-private-zone
        
-28. Let’s export the service account emails as these will be called inside the deployment manager templates of our master & worker nodes. In our demo, we will be using the same service account we created earlier:
+30. Let’s export the service account emails as these will be called inside the deployment manager templates of our master & worker nodes. In our demo, we will be using the same service account we created earlier:
 
         export MASTER_SERVICE_ACCOUNT=(`gcloud iam service-accounts list --filter "email~^ocp-serviceaccount@${PROJECT_NAME}." --format json | jq -r '.[0].email'`)
         export WORKER_SERVICE_ACCOUNT=(`gcloud iam service-accounts list --filter "email~^ocp-serviceaccount@${PROJECT_NAME}." --format json | jq -r '.[0].email'`)
      
      If the above commands do not set the correct service account email ENV variable, you can try running `gcloud iam service-accounts list`, copy the email address for your service account from the output's email column and manually set it as the environment variable for both `MASTER_SERVICE_ACCOUNT` & `WORKER_SERVICE_ACCOUNT`.
      
-29. Now let’s create 2 google cloud buckets. One will be for storing the bootstrap.ign file for the bootstrap node, and the other will be the one to store the RedHat Coreos image that the cluster nodes will pull to boot up from.
+31. Now let’s create 2 google cloud buckets. One will be for storing the bootstrap.ign file for the bootstrap node, and the other will be the one to store the RedHat Coreos image that the cluster nodes will pull to boot up from.
+
+! run image.sh
     1. Bucket to store bootstrap.ign file.
     
            gsutil mb gs://${INFRA_ID}-bootstrap-ignition
@@ -354,15 +361,18 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
            export IMAGE_SOURCE=gs://rhcosbucket/rhcos-4.10.3-x86_64-gcp.x86_64.tar.gz
            gcloud compute images create "${INFRA_ID}-rhcos-image" --source-uri="${IMAGE_SOURCE}"
            
-30. Let’s set the CLUSTER_IMAGE env to be called later by the node creation commands.
+32. Let’s set the CLUSTER_IMAGE env to be called later by the node creation commands.
 
         export CLUSTER_IMAGE=(`gcloud compute images describe ${INFRA_ID}-rhcos-image --format json | jq -r .selfLink`)
 
-31. Let’s set the BOOTSTRAP_IGN env to be called in the next step of bootstrap node creation.
+33. Let’s set the BOOTSTRAP_IGN env to be called in the next step of bootstrap node creation.
        
         export BOOTSTRAP_IGN=`gsutil signurl -d 1h service-account-key.json gs://${INFRA_ID}-bootstrap-ignition/bootstrap.ign | grep "^gs:" | awk '{print $5}'`
 
-32. Now we create the bootstrap node itself using the relevant Deployment Manager template. The below commands will create the bootstrap node, a public IP for it, and an empty instance group for the bootstrap node:
+34. Now we create the bootstrap node itself using the relevant Deployment Manager template. The below commands will create the bootstrap node, a public IP for it, and an empty instance group for the bootstrap node:
+    ! run bootsrap_vm.sh
+
+
     1. Create the `.yaml` config file for the bootstrap node deployment:
     
            cat <<EOF >04_bootstrap.yaml
@@ -385,17 +395,17 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
 
                bootstrap_ign: '${BOOTSTRAP_IGN}' 
            EOF
-    2. Run the command to create the bootstrap node.
+    2. Run the command to create the bootstrap node. YES
 
            gcloud deployment-manager deployments create ${INFRA_ID}-bootstrap --config 04_bootstrap.yaml
            
         
-33. Now we need to manually add the bootstrap node to the new empty instance group and add it as part of the internal load balancer we created earlier. This is mandatory as the initial temporary bootstrap cluster is hosted on the bootstrap node.
+35. Now we need to manually add the bootstrap node to the new empty instance group and add it as part of the internal load balancer we created earlier. This is mandatory as the initial temporary bootstrap cluster is hosted on the bootstrap node.
 
         gcloud compute instance-groups unmanaged add-instances ${INFRA_ID}-bootstrap-instance-group --zone=${ZONE_0} --instances=${INFRA_ID}-bootstrap
         gcloud compute backend-services add-backend ${INFRA_ID}-api-internal-backend-service --region=${REGION} --instance-group=${INFRA_ID}-bootstrap-instance-group --instance-group-zone=${ZONE_0}
 
-34. We now proceed with the master nodes creation. Note that we are using instance types e2-standard-4, but you can use any other type which suits you best. However please ensure the type you choose accommodates at least 16GB Memory and 4 vCPUs, as OCP will not be able to run the required containers on lower spec instance types. I have tried many times and it has usually failed or has been unstable.
+36. We now proceed with the master nodes creation. Note that we are using instance types e2-standard-4, but you can use any other type which suits you best. However please ensure the type you choose accommodates at least 16GB Memory and 4 vCPUs, as OCP will not be able to run the required containers on lower spec instance types. I have tried many times and it has usually failed or has been unstable.
     1. Set the env variable for the master ignition config file.
 
            export MASTER_IGNITION=`cat $INSTALL_DIR/master.ign`
@@ -429,24 +439,24 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
     
         gcloud deployment-manager deployments create ${INFRA_ID}-control-plane --config 05_control_plane.yaml
         
-35. Once the master nodes have been deployed, we also need to add them to their respective instance groups that were created earlier in the load balancer creation step:
+37. Once the master nodes have been deployed, we also need to add them to their respective instance groups that were created earlier in the load balancer creation step:
 
         gcloud compute instance-groups unmanaged add-instances ${INFRA_ID}-master-${ZONE_0}-instance-group --zone=${ZONE_0} --instances=${INFRA_ID}-master-0
         gcloud compute instance-groups unmanaged add-instances ${INFRA_ID}-master-${ZONE_1}-instance-group --zone=${ZONE_1} --instances=${INFRA_ID}-master-1
         gcloud compute instance-groups unmanaged add-instances ${INFRA_ID}-master-${ZONE_2}-instance-group --zone=${ZONE_2} --instances=${INFRA_ID}-master-2
         
-36. At this point we must now wait for the bootstrap process to complete. You can now monitor the bootstrap process:
+38. At this point we must now wait for the bootstrap process to complete. You can now monitor the bootstrap process:
     1. ssh into your bootstrap node from your bastion host (`ssh -i ~/.ssh/id_rsa core@<ip of your bootstrap node>`) and run `journalctl -b -f -u release-image.service -u bootkube.service` . Upon bootstrap process completion, the output of this command should stop at a message that looks something like `systemd[1]: bootkube.service: Succeeded`. 
     2. You can also ssh into the master nodes from your bastion host (`ssh -i ~/.ssh/id_rsa core@<ip of your master node>`) and run a `sudo crictl ps` to monitor the container creation of the various OCP components. Sometimes the kube-apiserver & etcd related components fluctuate and keep flapping. Do not panic and allow some time for these to stabilize. You can also perform a rolling reboot of your master nodes if you wish to.
 
-37. Once our bootstrap process completes, we can remove the bootstrap components:
+39. Once our bootstrap process completes, we can remove the bootstrap components:
 
         gcloud compute backend-services remove-backend ${INFRA_ID}-api-internal-backend-service --region=${REGION} --instance-group=${INFRA_ID}-bootstrap-instance-group --instance-group-zone=${ZONE_0}
         gsutil rm gs://${INFRA_ID}-bootstrap-ignition/bootstrap.ign
         gsutil rb gs://${INFRA_ID}-bootstrap-ignition
         gcloud deployment-manager deployments delete ${INFRA_ID}-bootstrap
 
-38. Now we are good to create the worker nodes. Note that if we run an `oc get co` command from the bastion host at this time, we will still see a few operators as *'unavailable'*, typically the ingress, console, authentication, and a few other cluster operators. This is because they depend on some components which need to come up on the worker nodes. For example, the ingress cluster operator will deploy the router pods on the worker nodes by default, and only then will a route to the console be created, and eventually the authentication operator would also reach completion.
+40. Now we are good to create the worker nodes. Note that if we run an `oc get co` command from the bastion host at this time, we will still see a few operators as *'unavailable'*, typically the ingress, console, authentication, and a few other cluster operators. This is because they depend on some components which need to come up on the worker nodes. For example, the ingress cluster operator will deploy the router pods on the worker nodes by default, and only then will a route to the console be created, and eventually the authentication operator would also reach completion.
     1. Set the env variable for the worker ignition config file.
 
            export WORKER_IGNITION=`cat $INSTALL_DIR/worker.ign`
@@ -486,12 +496,12 @@ Once we have our worker nodes up and running, we will configure a reverse proxy 
 
             gcloud deployment-manager deployments create ${INFRA_ID}-worker --config 06_worker.yaml
 
-39. With the node deployments created, there should be 2 CSRs in a pending state, we need to approve these. Once we approve the first 2, there will be 2 additional CSRs generated by those nodes, therefore, 4 CSRs (in sequence of 2 CSRs each) in total that we must approve.
+41. With the node deployments created, there should be 2 CSRs in a pending state, we need to approve these. Once we approve the first 2, there will be 2 additional CSRs generated by those nodes, therefore, 4 CSRs (in sequence of 2 CSRs each) in total that we must approve.
 
         oc get csr
         oc adm certificate approve <csr name>
 
-40. Now if we run `oc get nodes`, we should be able to see the worker nodes too. 
+42. Now if we run `oc get nodes`, we should be able to see the worker nodes too. 
 
 ### Creating a second Internal Load Balancer for worker plane traffic 
 
